@@ -23,3 +23,8 @@ export const beastieFaceEmotes = [
   "SSSsss",
   "OhMyDog"
 ];
+
+export enum POST_EVENT {
+  "LIVE",
+  "NONE"
+}

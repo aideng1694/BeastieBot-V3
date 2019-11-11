@@ -2,8 +2,8 @@ require("source-map-support").install();
 require("dotenv").config();
 import Beastie from "./beastie";
 
-const beastie = new Beastie();
+const beastie = Beastie.create();
 
-beastie.start().then(() => {
-  console.log("Beastie is alive! RAWR");
+beastie.then(() => {
+  console.log("BeastieBot is alive! RAWR");
 });

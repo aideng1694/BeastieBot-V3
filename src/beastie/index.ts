@@ -1,34 +1,42 @@
 import tmi from "tmi.js";
 import Twitter from "twitter";
+import Discord from "discord.js";
 import config from "../config";
 import beastieOptions from "./beastieOptions";
 import Webhooks from "../webhooks";
 import twitterOptions from "../twitter/twitterOptions";
 import { getBroadcasterId } from "../utils";
-import { determineBeastieResponse } from "./events/message";
-import handleFollow from "../webhooks/events/follow";
-import handleStreamChange from "../webhooks/events/streamChange";
-import handleSubscribe from "../webhooks/events/subscribe";
-import { updateChattersAwesomeness, isStreaming } from "../utils";
+import { updateChattersAwesomeness, initStream } from "../utils";
 import {
   awesomenessInterval,
   awesomenessIntervalAmount,
   discordInterval
 } from "../utils/values";
+import { determineBeastieResponse } from "./events/message";
+import handleFollow from "../webhooks/events/follow";
+import handleStreamChange from "../webhooks/events/streamChange";
+import handleSubscribe from "../webhooks/events/subscribe";
+import { handleDiscordReady } from "../discord";
 
 interface StateType {
   isStreaming: boolean;
+  curStreamId: number;
 }
 
 export default class BeastieBot {
-  webhooks: Webhooks;
+  state: StateType;
+
   tmiClient: tmi.Client;
+  webhooks: Webhooks;
   twitterClient: Twitter;
-  // discord client with type
+  discordClient: any;
+
   broadcasterUsername: string;
   broadcasterId: number;
 
-  state: StateType;
+  discordGuildId: string;
+  discordWelcomeChId: string;
+  discordAnnouncementsChId: string;
 
   awesomenessInterval: NodeJS.Timeout;
   awesomenessIntervalAmount: number;
@@ -47,7 +55,7 @@ export default class BeastieBot {
     });
 
     tmiClient.on("disconnected", () => {
-      console.log("BEASTIE HAS BEEN DISCONNECTED");
+      console.log("BEASTIE HAS BEEN DISCONNECTED FROM TWITCH");
       this.onDisconnect();
     });
 
@@ -56,18 +64,31 @@ export default class BeastieBot {
       this.onDisconnect();
     });
 
+    console.log("tmi init finished");
     return tmiClient;
   }
 
-  constructor() {
-    this.state = {
-      isStreaming: false
+  private constructor() {}
+
+  public static async create() {
+    const beastie = new BeastieBot();
+
+    beastie.state = {
+      isStreaming: false,
+      curStreamId: 0
     };
 
-    this.awesomenessIntervalAmount = awesomenessIntervalAmount;
+    beastie.awesomenessIntervalAmount = awesomenessIntervalAmount;
 
-    this.tmiClient = this.initTmi();
-    console.log("tmi init finished");
+    beastie.tmiClient = beastie.initTmi();
+    beastie.broadcasterId = await getBroadcasterId(config.BROADCASTER_USERNAME);
+
+    beastie.webhooks = beastie.initWebhooks();
+    beastie.twitterClient = beastie.initTwitter();
+    beastie.discordClient = beastie.initDiscord();
+
+    beastie.state = await beastie.initState();
+    return beastie;
   }
 
   initWebhooks() {
@@ -88,62 +109,104 @@ export default class BeastieBot {
     return twitterClient;
   }
 
+  initDiscord() {
+    const discordClient = new Discord.Client();
+
+    discordClient.on("ready", this.onDiscordReady.bind(this));
+
+    discordClient.on("disconnect", () => {
+      console.log("BEASTIE HAS BEEN DISCONNECTED FROM DISCORD");
+      this.onDisconnect();
+    });
+
+    discordClient.on("guildMemberAdd", this.onDiscordGuildMemberAdd.bind(this));
+
+    console.log(`discord init finished`);
+    return discordClient;
+  }
+
   initState = async () => {
-    const isLive = await isStreaming();
+    const stream = await initStream();
 
     console.log("state init finished");
     return {
       ...this.state,
-      isStreaming: isLive
+      isStreaming: stream.live,
+      curStream: stream.id
     };
   };
 
   private async initBeastieBot() {
-    this.broadcasterId = await getBroadcasterId(config.BROADCASTER_USERNAME);
-
-    this.webhooks = this.initWebhooks();
-    this.twitterClient = this.initTwitter();
-    // init discord client
-
-    this.state = await this.initState();
-    console.log(this.state);
-
     console.log("init finished");
   }
 
   public async start() {
-    await this.initBeastieBot();
+    //    await this.initBeastieBot()
     await this.tmiClient.connect();
+    await this.discordClient.login(config.DISCORD_TOKEN);
     this.toggleStreamIntervals(this.state.isStreaming);
   }
 
-  private say(msg) {
+  private twitchSay(msg) {
     this.tmiClient.say(config.BROADCASTER_USERNAME, msg);
+  }
+
+  private discordSay(channel, msg) {
+    this.discordClient.channels.get(channel).send(msg, {});
   }
 
   private onMessage(tags, message) {
     const response = determineBeastieResponse(tags, message);
-    if (response) this.say(response);
+    if (response) this.twitchSay(response);
   }
+
   private onConnect() {
-    this.say(`Hello team! I have awoken :D rawr`);
+    this.twitchSay(`Hello team! I have awoken :D rawr`);
   }
+
   private onDisconnect() {
-    this.say(`Goodbye team :) rawr`);
+    this.twitchSay(`Goodbye team :) rawr`);
   }
+
   private onStream(payload) {
-    const response = handleStreamChange(payload);
-    // clear or start beastie streamIntervals based on the payload
+    const stream = payload.data[0];
+    const response = handleStreamChange(
+      stream,
+      this.state.curStreamId,
+      this.twitterClient
+    );
+
+    this.state.isStreaming = response.live;
+    this.state.curStreamId = response.streamId;
+
     this.toggleStreamIntervals(this.state.isStreaming);
-    // this.say(response) say something based on the payload
+    this.twitchSay(response.msg);
+    this.discordSay(this.discordAnnouncementsChId, response.msg);
   }
+
   private onFollow(payload) {
     const response = handleFollow(payload);
-    this.say(response);
+    this.twitchSay(response);
   }
+
   private onSubscribe(payload) {
     const response = handleSubscribe(payload);
-    this.say(response);
+    this.twitchSay(response);
+  }
+
+  private onDiscordReady() {
+    const response = handleDiscordReady(this.discordClient);
+
+    this.discordGuildId = response.discordGuildId;
+    this.discordWelcomeChId = response.discordWelcomeChId;
+    this.discordAnnouncementsChId = response.discordAnnouncementsChId;
+  }
+
+  private onDiscordGuildMemberAdd(member) {
+    this.discordSay(
+      this.discordWelcomeChId,
+      `Welcome to our Discord guild ${member.displayName}! RAWR`
+    );
   }
 
   private toggleStreamIntervals(live) {

@@ -2,13 +2,12 @@ import rp from "request-promise";
 import R = require("ramda");
 import config from "../config";
 import db from "../db";
-import { DynamoDB } from "aws-sdk";
 
 export const isBroadcaster = name => {
   return name === config.BROADCASTER_USERNAME;
 };
 
-export const isStreaming = async () => {
+export const initStream = async () => {
   const streamInfo = await rp({
     uri: `https://api.twitch.tv/helix/streams?first=1&user_id=${
       config.BROADCASTER_USERNAME
@@ -21,8 +20,9 @@ export const isStreaming = async () => {
 
   const live =
     streamInfo.data[0] && streamInfo.data[0].type === "live" ? true : false;
+  const id = streamInfo.data[0] && streamInfo.data[0].id;
 
-  return live;
+  return { live, id };
 };
 
 export const getBroadcasterId = async broadcasterUsername => {

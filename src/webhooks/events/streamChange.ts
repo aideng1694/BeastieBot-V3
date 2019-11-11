@@ -1,10 +1,18 @@
-const handleStreamChange = payload => {
-  console.log(payload);
-  console.log(JSON.stringify(payload.event, null, 2));
+import { postToTwitter } from "../../twitter";
+import { POST_EVENT } from "../../utils/values";
 
-  return `Our stream info has changed! :O`;
+const handleStreamChange = (stream, curStreamId, twitterClient) => {
+  console.log(stream);
+  const live: boolean = stream.type ? stream.type === "live" : false;
+  const streamId: number = stream.id ? stream.id : 0;
+
+  if (streamId !== 0 && streamId !== curStreamId) {
+    postToTwitter(POST_EVENT.LIVE, twitterClient, streamId);
+  }
+
+  const msg: string = `Our stream info has changed! :O`;
+
+  return { live, streamId, msg };
 };
 
 export default handleStreamChange;
-
-// when stream changes, update beastie.state.isStreaming
