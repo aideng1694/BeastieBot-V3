@@ -43,58 +43,37 @@ export default class BeastieBot {
 
   discordInterval: NodeJS.Timeout;
 
+  private constructor() {}
+
   initTmi() {
     const tmiClient = new tmi.Client(beastieOptions);
 
     tmiClient.on("message", (channel, tags, message, self) => {
-      if (!self) this.onMessage(tags, message);
+      if (!self) this.onTwitchMessage(tags, message);
     });
 
     tmiClient.on("connected", () => {
-      this.onConnect();
+      this.onConnect("twitch");
     });
 
     tmiClient.on("disconnected", () => {
       console.log("BEASTIE HAS BEEN DISCONNECTED FROM TWITCH");
-      this.onDisconnect();
+      this.onDisconnect("twitch");
     });
 
     process.on("SIGINT", () => {
       console.log("SHUTTING DOWN ON SIGINT");
-      this.onDisconnect();
+      this.onDisconnect("twitch");
     });
 
     console.log("tmi init finished");
     return tmiClient;
   }
 
-  private constructor() {}
-
-  public static async create() {
-    const beastie = new BeastieBot();
-
-    beastie.state = {
-      isStreaming: false,
-      curStreamId: 0
-    };
-
-    beastie.awesomenessIntervalAmount = awesomenessIntervalAmount;
-
-    beastie.tmiClient = beastie.initTmi();
-    beastie.broadcasterId = await getBroadcasterId(config.BROADCASTER_USERNAME);
-
-    beastie.webhooks = beastie.initWebhooks();
-    beastie.twitterClient = beastie.initTwitter();
-    beastie.discordClient = beastie.initDiscord();
-
-    beastie.state = await beastie.initState();
-    return beastie;
-  }
-
   initWebhooks() {
     const webhooks = new Webhooks();
     webhooks.connect(this.broadcasterId);
-    webhooks.on("stream", this.onStream.bind(this));
+    webhooks.on("stream", this.onStreamChange.bind(this));
     webhooks.on("follow", this.onFollow.bind(this));
     //webhooks.on('subscribe', this.onSubscribe.bind(this))
 
@@ -116,7 +95,7 @@ export default class BeastieBot {
 
     discordClient.on("disconnect", () => {
       console.log("BEASTIE HAS BEEN DISCONNECTED FROM DISCORD");
-      this.onDisconnect();
+      this.onDisconnect("discord");
     });
 
     discordClient.on("guildMemberAdd", this.onDiscordGuildMemberAdd.bind(this));
@@ -136,15 +115,70 @@ export default class BeastieBot {
     };
   };
 
-  private async initBeastieBot() {
+  public static async create() {
+    const beastie = new BeastieBot();
+
+    beastie.state = {
+      isStreaming: false,
+      curStreamId: 0
+    };
+
+    beastie.awesomenessIntervalAmount = awesomenessIntervalAmount;
+
+    beastie.tmiClient = beastie.initTmi();
+    beastie.broadcasterId = await getBroadcasterId(config.BROADCASTER_USERNAME);
+
+    beastie.webhooks = beastie.initWebhooks();
+    beastie.twitterClient = beastie.initTwitter();
+    beastie.discordClient = beastie.initDiscord();
+
+    beastie.state = await beastie.initState();
     console.log("init finished");
+    return beastie;
   }
 
   public async start() {
-    //    await this.initBeastieBot()
     await this.tmiClient.connect();
     await this.discordClient.login(config.DISCORD_TOKEN);
+    //this.onConnect('discord');
     this.toggleStreamIntervals(this.state.isStreaming);
+  }
+
+  private toggleStreamIntervals(live) {
+    if (live) {
+      console.log("We are LIVE!");
+
+      if (this.awesomenessInterval === undefined)
+        this.awesomenessInterval = setInterval(async () => {
+          updateChattersAwesomeness(this.awesomenessIntervalAmount);
+        }, awesomenessInterval);
+
+      if (this.discordInterval === undefined)
+        this.discordInterval = setInterval(async () => {
+          console.log(
+            "DISCORD LINK: posted server link with short pitch of community!"
+          );
+        }, discordInterval);
+    } else {
+      clearInterval(this.awesomenessInterval);
+      clearInterval(this.discordInterval);
+    }
+  }
+
+  private onConnect(client) {
+    const msg = `Hello team! I have awoken :D RAWR`;
+
+    if (client === "twitch") this.twitchSay(msg);
+    else if (client === "discord")
+      this.discordSay(this.discordAnnouncementsChId, msg);
+  }
+
+  private onDisconnect(client) {
+    const msg = `Goodbye team :) rawr`;
+
+    if (client === "twitch") this.twitchSay(msg);
+    else if (client === "discord")
+      this.discordSay(this.discordAnnouncementsChId, msg);
   }
 
   private twitchSay(msg) {
@@ -155,20 +189,12 @@ export default class BeastieBot {
     this.discordClient.channels.get(channel).send(msg, {});
   }
 
-  private onMessage(tags, message) {
+  private onTwitchMessage(tags, message) {
     const response = determineBeastieResponse(tags, message);
     if (response) this.twitchSay(response);
   }
 
-  private onConnect() {
-    this.twitchSay(`Hello team! I have awoken :D rawr`);
-  }
-
-  private onDisconnect() {
-    this.twitchSay(`Goodbye team :) rawr`);
-  }
-
-  private onStream(payload) {
+  private onStreamChange(payload) {
     const stream = payload.data[0];
     const response = handleStreamChange(
       stream,
@@ -205,26 +231,14 @@ export default class BeastieBot {
   private onDiscordGuildMemberAdd(member) {
     this.discordSay(
       this.discordWelcomeChId,
-      `Welcome to our Discord guild ${member.displayName}! RAWR`
+      `Welcome to our Discord guild ${member.user}! RAWR`
     );
   }
-
-  private toggleStreamIntervals(live) {
-    if (live) {
-      console.log("We are LIVE!");
-
-      this.awesomenessInterval = setInterval(async () => {
-        updateChattersAwesomeness(this.awesomenessIntervalAmount);
-      }, awesomenessInterval);
-
-      this.discordInterval = setInterval(async () => {
-        console.log(
-          "DISCORD LINK: posted server link with short pitch of community!"
-        );
-      }, discordInterval);
-    } else {
-      clearInterval(this.awesomenessInterval);
-      clearInterval(this.discordInterval);
-    }
-  }
 }
+
+// add !awesomeness/!points command
+// add !uptime/!stream/!streaminfo command
+// install aws-sdk on desktop
+// test local dynamodb on desktop
+// create postToDiscord for when we go LIVE
+// figure out why beastie's discordClient login() is not awaiting properly

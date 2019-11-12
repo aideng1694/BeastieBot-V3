@@ -8,6 +8,7 @@ const handleStreamChange = (stream, curStreamId, twitterClient) => {
 
   if (streamId !== 0 && streamId !== curStreamId) {
     postToTwitter(POST_EVENT.LIVE, twitterClient, streamId);
+    // postToDiscord(POST_EVENT.LIVE, discordClient)
   }
 
   const msg: string = `Our stream info has changed! :O`;
